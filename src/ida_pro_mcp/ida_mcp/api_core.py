@@ -78,7 +78,7 @@ def _get_cached_strings() -> list[String]:
 
 @tool
 @idaread
-def idb_meta() -> Metadata:
+def get_metadata() -> Metadata:
     """Get IDB metadata"""
 
     def hash(f):
@@ -101,7 +101,7 @@ def idb_meta() -> Metadata:
 
 @test()
 def test_idb_meta():
-    meta = idb_meta()
+    meta = get_metadata()
     assert "path" in meta
     assert "module" in meta
     assert "base" in meta
@@ -116,14 +116,31 @@ def test_idb_meta():
 @idaread
 def lookup_funcs(
     queries: Annotated[list[str] | str, "Address(es) or name(s)"],
-) -> list[dict]:
-    """Get functions by address or name (auto-detects)"""
+    limit: Annotated[int, "Max functions when using '*' (default: 100, max: 1000)"] = 100,
+    offset: Annotated[int, "Skip first N functions when using '*' (default: 0)"] = 0,
+) -> list[dict] | dict:
+    """Get functions by address or name (auto-detects). Use '*' for all functions with pagination."""
     queries = normalize_list_input(queries)
 
-    # Treat empty/"*" as "all functions"
+    # Treat empty/"*" as "all functions" with pagination
     if not queries or (len(queries) == 1 and queries[0] in ("*", "")):
-        all_funcs = [get_function(addr) for addr in idautils.Functions()]
-        return [{"query": "*", "fn": fn, "error": None} for fn in all_funcs]
+        # Enforce max limit
+        if limit <= 0 or limit > 1000:
+            limit = 1000
+
+        all_func_addrs = list(idautils.Functions())
+        total = len(all_func_addrs)
+        paginated_addrs = all_func_addrs[offset : offset + limit]
+        all_funcs = [get_function(addr) for addr in paginated_addrs]
+        has_more = offset + limit < total
+
+        return {
+            "query": "*",
+            "functions": [{"fn": fn, "error": None} for fn in all_funcs],
+            "count": len(all_funcs),
+            "total": total,
+            "cursor": {"next": offset + limit} if has_more else {"done": True},
+        }
 
     if len(DEMANGLED_TO_EA) == 0:
         create_demangled_to_ea_map()
@@ -164,20 +181,59 @@ def lookup_funcs(
 
 @tool
 @idaread
-def cursor_addr() -> str:
+def get_current_address() -> str:
     """Get current address"""
     return hex(idaapi.get_screen_ea())
 
 
 @tool
 @idaread
-def cursor_func() -> Optional[Function]:
+def get_current_function() -> Optional[Function]:
     """Get current function"""
     return get_function(idaapi.get_screen_ea())
 
 
 @tool
-def int_convert(
+@idaread
+def get_function_by_name(name: Annotated[str, "Function name"]) -> dict:
+    """Get a function by its name"""
+    if len(DEMANGLED_TO_EA) == 0:
+        create_demangled_to_ea_map()
+
+    try:
+        ea = idaapi.get_name_ea(idaapi.BADADDR, name)
+        if ea == idaapi.BADADDR and name in DEMANGLED_TO_EA:
+            ea = DEMANGLED_TO_EA[name]
+
+        if ea != idaapi.BADADDR:
+            func = get_function(ea, raise_error=False)
+            if func:
+                return {"name": name, "fn": func, "error": None}
+            else:
+                return {"name": name, "fn": None, "error": "Not a function"}
+        else:
+            return {"name": name, "fn": None, "error": "Not found"}
+    except Exception as e:
+        return {"name": name, "fn": None, "error": str(e)}
+
+
+@tool
+@idaread
+def get_function_by_address(address: Annotated[str, "Function address"]) -> dict:
+    """Get a function by its address"""
+    try:
+        ea = parse_address(address)
+        func = get_function(ea, raise_error=False)
+        if func:
+            return {"address": address, "fn": func, "error": None}
+        else:
+            return {"address": address, "fn": None, "error": "Not a function"}
+    except Exception as e:
+        return {"address": address, "fn": None, "error": str(e)}
+
+
+@tool
+def convert_number(
     inputs: Annotated[
         list[NumberConversion] | NumberConversion,
         "Convert numbers to various formats (hex, decimal, binary, ascii)",
@@ -247,7 +303,7 @@ def int_convert(
 
 @tool
 @idaread
-def list_funcs(
+def list_functions(
     queries: Annotated[
         list[ListQuery] | ListQuery | str,
         "List functions with optional filtering and pagination",
@@ -310,7 +366,7 @@ def list_globals(
 
 @tool
 @idaread
-def imports(
+def list_imports(
     offset: Annotated[int, "Offset"],
     count: Annotated[int, "Count (0=all)"],
 ) -> Page[Import]:
@@ -339,7 +395,7 @@ def imports(
 
 @tool
 @idaread
-def strings(
+def list_strings(
     queries: Annotated[
         list[ListQuery] | ListQuery | str,
         "List strings with optional filtering and pagination",
@@ -409,12 +465,21 @@ def segments() -> list[Segment]:
 
 @tool
 @idaread
-def local_types():
-    """List local types"""
+def list_local_types(
+    limit: Annotated[int, "Max types to return (default: 500, max: 5000)"] = 500,
+    offset: Annotated[int, "Skip first N types (default: 0)"] = 0,
+    filter_pattern: Annotated[str, "Optional pattern to filter type names"] = "",
+) -> dict:
+    """List local types with pagination"""
+    # Enforce max limit
+    if limit <= 0 or limit > 5000:
+        limit = 5000
+
     error = ida_hexrays.hexrays_failure_t()
-    locals = []
+    all_types = []
     idati = ida_typeinf.get_idati()
     type_count = ida_typeinf.get_ordinal_limit(idati)
+
     for ordinal in range(1, type_count):
         try:
             tif = ida_typeinf.tinfo_t()
@@ -422,7 +487,13 @@ def local_types():
                 type_name = tif.get_type_name()
                 if not type_name:
                     type_name = f"<Anonymous Type #{ordinal}>"
-                locals.append(f"\nType #{ordinal}: {type_name}")
+
+                # Apply filter if provided
+                if filter_pattern and filter_pattern.lower() not in type_name.lower():
+                    continue
+
+                type_entry = {"ordinal": ordinal, "name": type_name}
+
                 if tif.is_udt():
                     c_decl_flags = (
                         ida_typeinf.PRTYPE_MULTI
@@ -434,7 +505,8 @@ def local_types():
                     )
                     c_decl_output = tif._print(None, c_decl_flags)
                     if c_decl_output:
-                        locals.append(f"  C declaration:\n{c_decl_output}")
+                        type_entry["declaration"] = c_decl_output
+                    type_entry["is_udt"] = True
                 else:
                     simple_decl = tif._print(
                         None,
@@ -443,14 +515,21 @@ def local_types():
                         | ida_typeinf.PRTYPE_SEMI,
                     )
                     if simple_decl:
-                        locals.append(f"  Simple declaration:\n{simple_decl}")
-            else:
-                message = f"\nType #{ordinal}: Failed to retrieve information."
-                if error.str:
-                    message += f": {error.str}"
-                if error.errea != idaapi.BADADDR:
-                    message += f"from (address: {hex(error.errea)})"
-                raise IDAError(message)
+                        type_entry["declaration"] = simple_decl
+                    type_entry["is_udt"] = False
+
+                all_types.append(type_entry)
         except Exception:
             continue
-    return locals
+
+    # Apply pagination
+    total_types = len(all_types)
+    paginated_types = all_types[offset : offset + limit]
+    has_more = offset + limit < total_types
+
+    return {
+        "types": paginated_types,
+        "count": len(paginated_types),
+        "total": total_types,
+        "cursor": {"next": offset + limit} if has_more else {"done": True},
+    }

@@ -20,7 +20,7 @@ from .utils import normalize_list_input, parse_address, MemoryRead, MemoryPatch
 
 @tool
 @idaread
-def get_bytes(regions: list[MemoryRead] | MemoryRead) -> list[dict]:
+def read_memory_bytes(regions: list[MemoryRead] | MemoryRead) -> list[dict]:
     """Read bytes from memory addresses"""
     if isinstance(regions, dict):
         regions = [regions]
@@ -42,7 +42,7 @@ def get_bytes(regions: list[MemoryRead] | MemoryRead) -> list[dict]:
 
 @tool
 @idaread
-def get_u8(
+def data_read_byte(
     addrs: Annotated[list[str] | str, "Addresses to read 8-bit unsigned integers from"],
 ) -> list[dict]:
     """Read 8-bit unsigned integers from memory addresses"""
@@ -62,7 +62,7 @@ def get_u8(
 
 @tool
 @idaread
-def get_u16(
+def data_read_word(
     addrs: Annotated[
         list[str] | str, "Addresses to read 16-bit unsigned integers from"
     ],
@@ -84,7 +84,7 @@ def get_u16(
 
 @tool
 @idaread
-def get_u32(
+def data_read_dword(
     addrs: Annotated[
         list[str] | str, "Addresses to read 32-bit unsigned integers from"
     ],
@@ -106,7 +106,7 @@ def get_u32(
 
 @tool
 @idaread
-def get_u64(
+def data_read_qword(
     addrs: Annotated[
         list[str] | str, "Addresses to read 64-bit unsigned integers from"
     ],
@@ -128,7 +128,7 @@ def get_u64(
 
 @tool
 @idaread
-def get_string(
+def data_read_string(
     addrs: Annotated[list[str] | str, "Addresses to read strings from"],
 ) -> list[dict]:
     """Read strings from memory addresses"""
@@ -180,41 +180,50 @@ def get_global_variable_value_internal(ea: int) -> str:
 
 @tool
 @idaread
-def get_global_value(
-    queries: Annotated[
-        list[str] | str, "Global variable addresses or names to read values from"
-    ],
+def get_global_variable_value_by_name(
+    names: Annotated[list[str] | str, "Global variable names to read values from"],
 ) -> list[dict]:
-    """Read global variable values by address or name
-    (auto-detects hex addresses vs names)"""
-    from .utils import looks_like_address
-
-    queries = normalize_list_input(queries)
+    """Read global variable values by name"""
+    names = normalize_list_input(names)
     results = []
 
-    for query in queries:
+    for name in names:
         try:
-            ea = idaapi.BADADDR
-
-            # Try as address first if it looks like one
-            if looks_like_address(query):
-                try:
-                    ea = parse_address(query)
-                except Exception:
-                    ea = idaapi.BADADDR
-
-            # Fall back to name lookup
-            if ea == idaapi.BADADDR:
-                ea = idaapi.get_name_ea(idaapi.BADADDR, query)
+            ea = idaapi.get_name_ea(idaapi.BADADDR, name)
 
             if ea == idaapi.BADADDR:
-                results.append({"query": query, "value": None, "error": "Not found"})
+                results.append({"name": name, "value": None, "error": "Not found"})
                 continue
 
             value = get_global_variable_value_internal(ea)
-            results.append({"query": query, "value": value, "error": None})
+            results.append({"name": name, "value": value, "error": None})
         except Exception as e:
-            results.append({"query": query, "value": None, "error": str(e)})
+            results.append({"name": name, "value": None, "error": str(e)})
+
+    return results
+
+
+@tool
+@idaread
+def get_global_variable_value_at_address(
+    addrs: Annotated[list[str] | str, "Global variable addresses to read values from"],
+) -> list[dict]:
+    """Read global variable values by address"""
+    addrs = normalize_list_input(addrs)
+    results = []
+
+    for addr in addrs:
+        try:
+            ea = parse_address(addr)
+
+            if ea == idaapi.BADADDR:
+                results.append({"addr": addr, "value": None, "error": "Invalid address"})
+                continue
+
+            value = get_global_variable_value_internal(ea)
+            results.append({"addr": addr, "value": value, "error": None})
+        except Exception as e:
+            results.append({"addr": addr, "value": None, "error": str(e)})
 
     return results
 

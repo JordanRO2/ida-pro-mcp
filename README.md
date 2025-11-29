@@ -204,7 +204,7 @@ _Note_: The `idalib` feature was contributed by [Willi Ballenthin](https://githu
 - `decompile(addrs)`: Decompile function(s) at given address(es).
 - `disasm(addrs)`: Disassemble function(s) with full details (arguments, stack frame, etc).
 - `xrefs_to(addrs)`: Get all cross-references to address(es).
-- `xrefs_to_field(queries)`: Get cross-references to specific struct field(s).
+- `get_xrefs_to_field(queries)`: Get cross-references to specific struct field(s).
 - `callees(addrs)`: Get functions called by function(s) at address(es).
 - `callers(addrs)`: Get functions that call the function(s) at address(es).
 - `entrypoints()`: Get all program entry points.

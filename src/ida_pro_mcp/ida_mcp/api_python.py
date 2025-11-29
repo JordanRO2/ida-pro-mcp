@@ -30,7 +30,7 @@ from .utils import parse_address, get_function
 @tool
 @idaread
 @unsafe
-def py_eval(
+def python_eval(
     code: Annotated[str, "Python code"],
 ) -> dict:
     """Execute Python code in IDA context.

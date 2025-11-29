@@ -383,8 +383,11 @@ def export_name_resource(name: Annotated[str, "Export name"]) -> dict:
 
 @resource("ida://types")
 @idaread
-def types_resource() -> list[dict]:
-    """Get all local types"""
+def types_resource(
+    offset: Annotated[int, "Starting index"] = 0,
+    count: Annotated[int, "Maximum results (0=all, default: 100)"] = 100,
+) -> Page[dict]:
+    """Get all local types with pagination"""
     import ida_typeinf
 
     types = []
@@ -393,13 +396,16 @@ def types_resource() -> list[dict]:
         if tif.get_numbered_type(None, ordinal):
             name = tif.get_type_name()
             types.append({"ordinal": ordinal, "name": name, "type": str(tif)})
-    return types
+    return paginate(types, offset, count)
 
 
 @resource("ida://structs")
 @idaread
-def structs_resource() -> list[dict]:
-    """Get all structures/unions"""
+def structs_resource(
+    offset: Annotated[int, "Starting index"] = 0,
+    count: Annotated[int, "Maximum results (0=all, default: 100)"] = 100,
+) -> Page[dict]:
+    """Get all structures/unions with pagination"""
     import ida_struct
 
     structs = []
@@ -414,7 +420,7 @@ def structs_resource() -> list[dict]:
                     "is_union": struc.is_union(),
                 }
             )
-    return structs
+    return paginate(structs, offset, count)
 
 
 @resource("ida://struct/{name}")
@@ -464,8 +470,12 @@ def struct_name_resource(name: Annotated[str, "Structure name"]) -> dict:
 
 @resource("ida://xrefs/to/{addr}")
 @idaread
-def xrefs_to_addr_resource(addr: Annotated[str, "Target address"]) -> list[dict]:
-    """Get cross-references to address"""
+def xrefs_to_addr_resource(
+    addr: Annotated[str, "Target address"],
+    offset: Annotated[int, "Starting index"] = 0,
+    count: Annotated[int, "Maximum results (0=all, default: 200)"] = 200,
+) -> Page[dict]:
+    """Get cross-references to address with pagination"""
     ea = parse_address(addr)
     xrefs = []
     for xref in idautils.XrefsTo(ea, 0):
@@ -475,13 +485,17 @@ def xrefs_to_addr_resource(addr: Annotated[str, "Target address"]) -> list[dict]
                 "type": "code" if xref.iscode else "data",
             }
         )
-    return xrefs
+    return paginate(xrefs, offset, count)
 
 
 @resource("ida://xrefs/from/{addr}")
 @idaread
-def xrefs_from_resource(addr: Annotated[str, "Source address"]) -> list[dict]:
-    """Get cross-references from address"""
+def xrefs_from_resource(
+    addr: Annotated[str, "Source address"],
+    offset: Annotated[int, "Starting index"] = 0,
+    count: Annotated[int, "Maximum results (0=all, default: 200)"] = 200,
+) -> Page[dict]:
+    """Get cross-references from address with pagination"""
     ea = parse_address(addr)
     xrefs = []
     for xref in idautils.XrefsFrom(ea, 0):
@@ -491,7 +505,7 @@ def xrefs_from_resource(addr: Annotated[str, "Source address"]) -> list[dict]:
                 "type": "code" if xref.iscode else "data",
             }
         )
-    return xrefs
+    return paginate(xrefs, offset, count)
 
 
 @resource("ida://stack/{func_addr}")

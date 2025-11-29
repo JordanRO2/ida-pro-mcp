@@ -29,8 +29,8 @@ from .utils import (
 
 @tool
 @idawrite
-def set_comments(items: list[CommentOp] | CommentOp):
-    """Set comments at addresses (both disassembly and decompiler views)"""
+def set_comment(items: list[CommentOp] | CommentOp):
+    """Set a comment for a given address in the function disassembly and pseudocode"""
     if isinstance(items, dict):
         items = [items]
 
@@ -111,7 +111,7 @@ def set_comments(items: list[CommentOp] | CommentOp):
 
 @tool
 @idawrite
-def patch_asm(items: list[AsmPatchOp] | AsmPatchOp) -> list[dict]:
+def patch_address_assembles(items: list[AsmPatchOp] | AsmPatchOp) -> list[dict]:
     """Patch assembly instructions at addresses"""
     if isinstance(items, dict):
         items = [items]
@@ -153,8 +153,91 @@ def patch_asm(items: list[AsmPatchOp] | AsmPatchOp) -> list[dict]:
 
 @tool
 @idawrite
+def rename_function(
+    function_address: str,
+    new_name: str,
+) -> dict:
+    """Rename a function"""
+    try:
+        ea = parse_address(function_address)
+        success = idaapi.set_name(ea, new_name, idaapi.SN_CHECK)
+        if success:
+            func = idaapi.get_func(ea)
+            if func:
+                refresh_decompiler_ctext(func.start_ea)
+        return {
+            "addr": function_address,
+            "name": new_name,
+            "ok": success,
+            "error": None if success else "Rename failed",
+        }
+    except Exception as e:
+        return {"addr": function_address, "error": str(e)}
+
+
+@tool
+@idawrite
+def rename_global_variable(
+    old_name: str,
+    new_name: str,
+) -> dict:
+    """Rename a global variable"""
+    try:
+        ea = idaapi.get_name_ea(idaapi.BADADDR, old_name)
+        if ea == idaapi.BADADDR:
+            return {
+                "old": old_name,
+                "new": new_name,
+                "ok": False,
+                "error": f"Global '{old_name}' not found",
+            }
+        success = idaapi.set_name(ea, new_name, idaapi.SN_CHECK)
+        return {
+            "old": old_name,
+            "new": new_name,
+            "ok": success,
+            "error": None if success else "Rename failed",
+        }
+    except Exception as e:
+        return {"old": old_name, "error": str(e)}
+
+
+@tool
+@idawrite
+def rename_local_variable(
+    function_address: str,
+    old_name: str,
+    new_name: str,
+) -> dict:
+    """Rename a local variable in a function"""
+    try:
+        func = idaapi.get_func(parse_address(function_address))
+        if not func:
+            return {
+                "func_addr": function_address,
+                "old": old_name,
+                "new": new_name,
+                "ok": False,
+                "error": "No function found",
+            }
+        success = ida_hexrays.rename_lvar(func.start_ea, old_name, new_name)
+        if success:
+            refresh_decompiler_ctext(func.start_ea)
+        return {
+            "func_addr": function_address,
+            "old": old_name,
+            "new": new_name,
+            "ok": success,
+            "error": None if success else "Rename failed",
+        }
+    except Exception as e:
+        return {"func_addr": function_address, "error": str(e)}
+
+
+@tool
+@idawrite
 def rename(batch: RenameBatch) -> dict:
-    """Unified rename operation for functions, globals, locals, and stack variables"""
+    """Unified rename operation for functions, globals, locals, and stack variables (legacy batch interface)"""
 
     def _normalize_items(items):
         """Convert single item or None to list"""

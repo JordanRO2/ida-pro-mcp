@@ -31,10 +31,29 @@ from .utils import (
 
 @tool
 @idawrite
+def declare_c_type(
+    c_declaration: Annotated[str, "C declaration of the type. Examples include: typedef int foo_t; struct bar { int a; bool b; };"],
+) -> dict:
+    """Create or update a local type from a C declaration"""
+    try:
+        flags = ida_typeinf.PT_SIL | ida_typeinf.PT_EMPTY | ida_typeinf.PT_TYP
+        errors, messages = parse_decls_ctypes(c_declaration, flags)
+
+        pretty_messages = "\n".join(messages)
+        if errors > 0:
+            return {"decl": c_declaration, "error": f"Failed to parse:\n{pretty_messages}"}
+        else:
+            return {"decl": c_declaration, "ok": True}
+    except Exception as e:
+        return {"decl": c_declaration, "error": str(e)}
+
+
+@tool
+@idawrite
 def declare_type(
     decls: Annotated[list[str] | str, "C type declarations"],
 ) -> list[dict]:
-    """Declare types"""
+    """Declare types (deprecated: use declare_c_type for single declarations)"""
     decls = normalize_list_input(decls)
     results = []
 
@@ -63,14 +82,28 @@ def declare_type(
 
 @tool
 @idaread
-def structs() -> list[StructureDefinition]:
-    """List all structures"""
-    rv = []
-    limit = ida_typeinf.get_ordinal_limit()
-    for ordinal in range(1, limit):
+def get_defined_structures(
+    limit: Annotated[int, "Max structures to return (default: 200, max: 2000)"] = 200,
+    offset: Annotated[int, "Skip first N structures (default: 0)"] = 0,
+    filter_pattern: Annotated[str, "Optional pattern to filter structure names"] = "",
+) -> dict:
+    """Returns a list of all defined structures"""
+    # Enforce max limit
+    if limit <= 0 or limit > 2000:
+        limit = 2000
+
+    all_structs = []
+    type_limit = ida_typeinf.get_ordinal_limit()
+    for ordinal in range(1, type_limit):
         tif = ida_typeinf.tinfo_t()
         tif.get_numbered_type(None, ordinal)
         if tif.is_udt():
+            type_name = tif.get_type_name()
+
+            # Apply filter if provided
+            if filter_pattern and filter_pattern.lower() not in (type_name or "").lower():
+                continue
+
             udt = ida_typeinf.udt_type_data_t()
             members = []
             if tif.get_udt_details(udt):
@@ -84,212 +117,258 @@ def structs() -> list[StructureDefinition]:
                     for _, x in enumerate(udt)
                 ]
 
-            rv += [
+            all_structs.append(
                 StructureDefinition(
-                    name=tif.get_type_name(), size=hex(tif.get_size()), members=members
+                    name=type_name, size=hex(tif.get_size()), members=members
                 )
-            ]
+            )
 
-    return rv
+    # Apply pagination
+    total_structs = len(all_structs)
+    paginated_structs = all_structs[offset : offset + limit]
+    has_more = offset + limit < total_structs
+
+    return {
+        "structs": paginated_structs,
+        "count": len(paginated_structs),
+        "total": total_structs,
+        "cursor": {"next": offset + limit} if has_more else {"done": True},
+    }
 
 
 @tool
 @idaread
-def struct_info(
-    names: Annotated[list[str] | str, "Structure names to query"],
-) -> list[dict]:
-    """Get struct info"""
-    names = normalize_list_input(names)
-    results = []
+def analyze_struct_detailed(
+    name: Annotated[str, "Name of the structure to analyze"],
+    max_members: Annotated[int, "Max members to return per struct (default: 500, max: 2000, 0=all)"] = 500,
+) -> dict:
+    """Detailed analysis of a structure with all fields"""
+    # Enforce max limit (0 means no limit up to max)
+    if max_members < 0 or max_members > 2000:
+        max_members = 2000
 
-    for name in names:
-        try:
-            tif = ida_typeinf.tinfo_t()
-            if not tif.get_named_type(None, name):
-                results.append({"name": name, "error": f"Struct '{name}' not found"})
-                continue
+    try:
+        tif = ida_typeinf.tinfo_t()
+        if not tif.get_named_type(None, name):
+            return {"name": name, "error": f"Struct '{name}' not found"}
 
-            result = {
-                "name": name,
-                "type": str(tif._print()),
-                "size": tif.get_size(),
-                "is_udt": tif.is_udt(),
+        result = {
+            "name": name,
+            "type": str(tif._print()),
+            "size": tif.get_size(),
+            "is_udt": tif.is_udt(),
+        }
+
+        if not tif.is_udt():
+            result["error"] = "Not a user-defined type"
+            return result
+
+        udt_data = ida_typeinf.udt_type_data_t()
+        if not tif.get_udt_details(udt_data):
+            result["error"] = "Failed to get struct details"
+            return result
+
+        total_members = udt_data.size()
+        result["cardinality"] = total_members
+        result["is_union"] = udt_data.is_union
+        result["udt_type"] = "Union" if udt_data.is_union else "Struct"
+
+        members = []
+        member_limit = max_members if max_members > 0 else total_members
+        for i, member in enumerate(udt_data):
+            if i >= member_limit:
+                break
+
+            offset = member.begin() // 8
+            size = member.size // 8 if member.size > 0 else member.type.get_size()
+            member_type = member.type._print()
+            member_name = member.name
+
+            member_info = {
+                "index": i,
+                "offset": f"0x{offset:08X}",
+                "size": size,
+                "type": member_type,
+                "name": member_name,
+                "is_nested_udt": member.type.is_udt(),
             }
 
-            if not tif.is_udt():
-                result["error"] = "Not a user-defined type"
-                results.append({"name": name, "info": result})
-                continue
+            if member.type.is_udt():
+                member_info["nested_size"] = member.type.get_size()
 
-            udt_data = ida_typeinf.udt_type_data_t()
-            if not tif.get_udt_details(udt_data):
-                result["error"] = "Failed to get struct details"
-                results.append({"name": name, "info": result})
-                continue
+            members.append(member_info)
 
+        result["members"] = members
+        result["members_returned"] = len(members)
+        result["members_truncated"] = len(members) < total_members
+        result["total_size"] = tif.get_size()
+
+        return result
+    except Exception as e:
+        return {"name": name, "error": str(e)}
+
+
+@tool
+@idaread
+def get_struct_info_simple(
+    name: Annotated[str, "Name of the structure"],
+) -> dict:
+    """Simple function to get basic structure information"""
+    try:
+        tif = ida_typeinf.tinfo_t()
+        if not tif.get_named_type(None, name):
+            return {"name": name, "error": f"Struct '{name}' not found"}
+
+        result = {
+            "name": name,
+            "type": str(tif._print()),
+            "size": tif.get_size(),
+            "is_udt": tif.is_udt(),
+        }
+
+        if not tif.is_udt():
+            result["error"] = "Not a user-defined type"
+            return result
+
+        udt_data = ida_typeinf.udt_type_data_t()
+        if tif.get_udt_details(udt_data):
             result["cardinality"] = udt_data.size()
             result["is_union"] = udt_data.is_union
             result["udt_type"] = "Union" if udt_data.is_union else "Struct"
 
-            members = []
-            for i, member in enumerate(udt_data):
-                offset = member.begin() // 8
-                size = member.size // 8 if member.size > 0 else member.type.get_size()
-                member_type = member.type._print()
-                member_name = member.name
-
-                member_info = {
-                    "index": i,
-                    "offset": f"0x{offset:08X}",
-                    "size": size,
-                    "type": member_type,
-                    "name": member_name,
-                    "is_nested_udt": member.type.is_udt(),
-                }
-
-                if member.type.is_udt():
-                    member_info["nested_size"] = member.type.get_size()
-
-                members.append(member_info)
-
-            result["members"] = members
-            result["total_size"] = tif.get_size()
-
-            results.append({"name": name, "info": result})
-        except Exception as e:
-            results.append({"name": name, "error": str(e)})
-
-    return results
+        return result
+    except Exception as e:
+        return {"name": name, "error": str(e)}
 
 
 @tool
 @idaread
-def read_struct(queries: list[StructRead] | StructRead) -> list[dict]:
-    """Read struct fields"""
+def get_struct_at_address(
+    address: Annotated[str, "Address to analyze structure at"],
+    struct_name: Annotated[str, "Name of the structure"],
+    max_members: Annotated[int, "Max members to read per struct (default: 200, max: 1000, 0=all)"] = 200,
+) -> dict:
+    """Get structure field values at a specific address"""
+    # Enforce max limit (0 means no limit up to max)
+    if max_members < 0 or max_members > 1000:
+        max_members = 1000
 
-    def parse_addr_struct(s: str) -> dict:
-        # Support "addr:struct" or just "addr" (auto-detect struct)
-        if ":" in s:
-            parts = s.split(":", 1)
-            return {"addr": parts[0].strip(), "struct": parts[1].strip()}
-        return {"addr": s.strip(), "struct": ""}
+    try:
+        addr = parse_address(address)
 
-    queries = normalize_dict_list(queries, parse_addr_struct)
+        tif = ida_typeinf.tinfo_t()
+        if not tif.get_named_type(None, struct_name):
+            return {
+                "address": address,
+                "struct": struct_name,
+                "members": None,
+                "error": f"Struct '{struct_name}' not found",
+            }
 
-    results = []
-    for query in queries:
-        addr_str = query.get("addr", "")
-        struct_name = query.get("struct", "")
+        udt_data = ida_typeinf.udt_type_data_t()
+        if not tif.get_udt_details(udt_data):
+            return {
+                "address": address,
+                "struct": struct_name,
+                "members": None,
+                "error": "Failed to get struct details",
+            }
 
-        try:
-            addr = parse_address(addr_str)
+        total_members = udt_data.size()
+        member_limit = max_members if max_members > 0 else total_members
 
-            tif = ida_typeinf.tinfo_t()
-            if not tif.get_named_type(None, struct_name):
-                results.append(
-                    {
-                        "addr": addr_str,
-                        "struct": struct_name,
-                        "members": None,
-                        "error": f"Struct '{struct_name}' not found",
-                    }
-                )
-                continue
+        members = []
+        for i, member in enumerate(udt_data):
+            if i >= member_limit:
+                break
 
-            udt_data = ida_typeinf.udt_type_data_t()
-            if not tif.get_udt_details(udt_data):
-                results.append(
-                    {
-                        "addr": addr_str,
-                        "struct": struct_name,
-                        "members": None,
-                        "error": "Failed to get struct details",
-                    }
-                )
-                continue
+            offset = member.begin() // 8
+            member_addr = addr + offset
+            member_type = member.type._print()
+            member_name = member.name
+            member_size = member.type.get_size()
 
-            members = []
-            for member in udt_data:
-                offset = member.begin() // 8
-                member_addr = addr + offset
-                member_type = member.type._print()
-                member_name = member.name
-                member_size = member.type.get_size()
-
-                try:
-                    if member.type.is_ptr():
-                        is_64bit = (
-                            ida_ida.inf_is_64bit()
-                            if ida_major >= 9
-                            else idaapi.get_inf_structure().is_64bit()
-                        )
-                        if is_64bit:
-                            value = idaapi.get_qword(member_addr)
-                            value_str = f"0x{value:016X}"
-                        else:
-                            value = idaapi.get_dword(member_addr)
-                            value_str = f"0x{value:08X}"
-                    elif member_size == 1:
-                        value = idaapi.get_byte(member_addr)
-                        value_str = f"0x{value:02X} ({value})"
-                    elif member_size == 2:
-                        value = idaapi.get_word(member_addr)
-                        value_str = f"0x{value:04X} ({value})"
-                    elif member_size == 4:
-                        value = idaapi.get_dword(member_addr)
-                        value_str = f"0x{value:08X} ({value})"
-                    elif member_size == 8:
+            try:
+                if member.type.is_ptr():
+                    is_64bit = (
+                        ida_ida.inf_is_64bit()
+                        if ida_major >= 9
+                        else idaapi.get_inf_structure().is_64bit()
+                    )
+                    if is_64bit:
                         value = idaapi.get_qword(member_addr)
-                        value_str = f"0x{value:016X} ({value})"
+                        value_str = f"0x{value:016X}"
                     else:
-                        bytes_data = []
-                        for i in range(min(member_size, 16)):
-                            try:
-                                byte_val = idaapi.get_byte(member_addr + i)
-                                bytes_data.append(f"{byte_val:02X}")
-                            except Exception:
-                                break
-                        value_str = f"[{' '.join(bytes_data)}{'...' if member_size > 16 else ''}]"
-                except Exception:
-                    value_str = "<failed to read>"
+                        value = idaapi.get_dword(member_addr)
+                        value_str = f"0x{value:08X}"
+                elif member_size == 1:
+                    value = idaapi.get_byte(member_addr)
+                    value_str = f"0x{value:02X} ({value})"
+                elif member_size == 2:
+                    value = idaapi.get_word(member_addr)
+                    value_str = f"0x{value:04X} ({value})"
+                elif member_size == 4:
+                    value = idaapi.get_dword(member_addr)
+                    value_str = f"0x{value:08X} ({value})"
+                elif member_size == 8:
+                    value = idaapi.get_qword(member_addr)
+                    value_str = f"0x{value:016X} ({value})"
+                else:
+                    bytes_data = []
+                    for j in range(min(member_size, 16)):
+                        try:
+                            byte_val = idaapi.get_byte(member_addr + j)
+                            bytes_data.append(f"{byte_val:02X}")
+                        except Exception:
+                            break
+                    value_str = f"[{' '.join(bytes_data)}{'...' if member_size > 16 else ''}]"
+            except Exception:
+                value_str = "<failed to read>"
 
-                member_info = {
-                    "offset": f"0x{offset:08X}",
-                    "type": member_type,
-                    "name": member_name,
-                    "value": value_str,
-                }
+            member_info = {
+                "offset": f"0x{offset:08X}",
+                "type": member_type,
+                "name": member_name,
+                "value": value_str,
+            }
 
-                members.append(member_info)
+            members.append(member_info)
 
-            results.append(
-                {"addr": addr_str, "struct": struct_name, "members": members}
-            )
-        except Exception as e:
-            results.append(
-                {
-                    "addr": addr_str,
-                    "struct": struct_name,
-                    "members": None,
-                    "error": str(e),
-                }
-            )
-
-    return results
+        return {
+            "address": address,
+            "struct": struct_name,
+            "members": members,
+            "members_returned": len(members),
+            "total_members": total_members,
+            "truncated": len(members) < total_members,
+        }
+    except Exception as e:
+        return {
+            "address": address,
+            "struct": struct_name,
+            "members": None,
+            "error": str(e),
+        }
 
 
 @tool
 @idaread
-def search_structs(
+def search_structures(
     filter: Annotated[
-        str, "Case-insensitive substring to search for in structure names"
+        str, "Filter pattern to search for structures (case-insensitive)"
     ],
-) -> list[dict]:
-    """Search structs"""
-    results = []
-    limit = ida_typeinf.get_ordinal_limit()
+    limit: Annotated[int, "Max results to return (default: 200, max: 2000)"] = 200,
+    offset: Annotated[int, "Skip first N results (default: 0)"] = 0,
+) -> dict:
+    """Search for structures by name pattern"""
+    # Enforce max limit
+    if limit <= 0 or limit > 2000:
+        limit = 2000
 
-    for ordinal in range(1, limit):
+    all_results = []
+    type_limit = ida_typeinf.get_ordinal_limit()
+
+    for ordinal in range(1, type_limit):
         tif = ida_typeinf.tinfo_t()
         if tif.get_numbered_type(None, ordinal):
             type_name: str = tif.get_type_name()
@@ -300,7 +379,7 @@ def search_structs(
                     if tif.get_udt_details(udt_data):
                         cardinality = udt_data.size()
 
-                    results.append(
+                    all_results.append(
                         {
                             "name": type_name,
                             "size": tif.get_size(),
@@ -314,7 +393,17 @@ def search_structs(
                         }
                     )
 
-    return results
+    # Apply pagination
+    total_results = len(all_results)
+    paginated_results = all_results[offset : offset + limit]
+    has_more = offset + limit < total_results
+
+    return {
+        "structs": paginated_results,
+        "count": len(paginated_results),
+        "total": total_results,
+        "cursor": {"next": offset + limit} if has_more else {"done": True},
+    }
 
 
 # ============================================================================
@@ -534,3 +623,130 @@ def infer_types(
             )
 
     return results
+
+
+# ============================================================================
+# Specialized Type Setting Functions
+# ============================================================================
+
+
+@tool
+@idawrite
+def set_function_prototype(
+    function_address: Annotated[str, "Address of the function"],
+    prototype: Annotated[str, "New function prototype"],
+) -> dict:
+    """Set a function's prototype"""
+    try:
+        func = idaapi.get_func(parse_address(function_address))
+        if not func:
+            return {
+                "function_address": function_address,
+                "prototype": prototype,
+                "error": "Function not found",
+            }
+
+        tif = ida_typeinf.tinfo_t()
+        if not tif.deserialize(None, prototype):
+            # Try parsing as C declaration
+            tif = ida_typeinf.tinfo_t(prototype, None, ida_typeinf.PT_SIL)
+
+        if not tif.is_func():
+            return {
+                "function_address": function_address,
+                "prototype": prototype,
+                "error": "Not a function type",
+            }
+
+        success = ida_typeinf.apply_tinfo(func.start_ea, tif, ida_typeinf.TINFO_DEFINITE)
+        return {
+            "function_address": function_address,
+            "prototype": prototype,
+            "ok": success,
+            "error": None if success else "Failed to apply prototype",
+        }
+    except Exception as e:
+        return {
+            "function_address": function_address,
+            "prototype": prototype,
+            "error": str(e),
+        }
+
+
+@tool
+@idawrite
+def set_local_variable_type(
+    function_address: Annotated[str, "Address of the decompiled function containing the variable"],
+    variable_name: Annotated[str, "Name of the variable"],
+    new_type: Annotated[str, "New type for the variable"],
+) -> dict:
+    """Set a local variable's type"""
+    try:
+        func = idaapi.get_func(parse_address(function_address))
+        if not func:
+            return {
+                "function_address": function_address,
+                "variable_name": variable_name,
+                "new_type": new_type,
+                "error": "Function not found",
+            }
+
+        new_tif = ida_typeinf.tinfo_t()
+        if not new_tif.deserialize(None, new_type):
+            # Try parsing as C type
+            new_tif = ida_typeinf.tinfo_t(new_type, None, ida_typeinf.PT_SIL)
+
+        modifier = my_modifier_t(variable_name, new_tif)
+        success = ida_hexrays.modify_user_lvars(func.start_ea, modifier)
+
+        return {
+            "function_address": function_address,
+            "variable_name": variable_name,
+            "new_type": new_type,
+            "ok": success,
+            "error": None if success else "Failed to set type",
+        }
+    except Exception as e:
+        return {
+            "function_address": function_address,
+            "variable_name": variable_name,
+            "new_type": new_type,
+            "error": str(e),
+        }
+
+
+@tool
+@idawrite
+def set_global_variable_type(
+    variable_name: Annotated[str, "Name of the global variable"],
+    new_type: Annotated[str, "New type for the variable"],
+) -> dict:
+    """Set a global variable's type"""
+    try:
+        ea = idaapi.get_name_ea(idaapi.BADADDR, variable_name)
+        if ea == idaapi.BADADDR:
+            return {
+                "variable_name": variable_name,
+                "new_type": new_type,
+                "error": f"Global variable '{variable_name}' not found",
+            }
+
+        tif = ida_typeinf.tinfo_t()
+        if not tif.deserialize(None, new_type):
+            # Try parsing as C type or getting by name
+            tif = get_type_by_name(new_type)
+
+        success = ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.TINFO_DEFINITE)
+
+        return {
+            "variable_name": variable_name,
+            "new_type": new_type,
+            "ok": success,
+            "error": None if success else "Failed to set type",
+        }
+    except Exception as e:
+        return {
+            "variable_name": variable_name,
+            "new_type": new_type,
+            "error": str(e),
+        }

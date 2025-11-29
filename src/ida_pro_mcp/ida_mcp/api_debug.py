@@ -387,8 +387,8 @@ def dbg_regs_thread(
 @tool
 @idaread
 @unsafe
-def dbg_regs_cur() -> ThreadRegisters:
-    """Get current thread registers"""
+def dbg_current_regs_all() -> ThreadRegisters:
+    """Get all registers for current thread"""
     dbg = dbg_ensure_running()
     tid = ida_dbg.get_current_thread()
     return _get_registers_for_thread(dbg, tid)

@@ -26,11 +26,12 @@ from . import api_stack
 from . import api_debug
 from . import api_python
 from . import api_resources
+from . import api_advanced
 
 # Re-export key components for external use
 from .sync import idaread, idawrite, IDAError, IDASyncError
 from .rpc import MCP_SERVER, MCP_UNSAFE, tool, unsafe, resource
-from .http import IdaMcpHttpRequestHandler
+from .ida_http import IdaMcpHttpRequestHandler
 
 __all__ = [
     # Infrastructure modules
@@ -47,6 +48,7 @@ __all__ = [
     "api_debug",
     "api_python",
     "api_resources",
+    "api_advanced",
     # Re-exported components
     "idaread",
     "idawrite",

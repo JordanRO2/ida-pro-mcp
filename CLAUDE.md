@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 IDA Pro MCP Server - enables LLM-assisted reverse engineering by bridging IDA Pro with Model Context Protocol clients through a JSON-RPC HTTP server.
 
+**Current Version**: 1.5.0 (fork with pagination improvements)
+
 **Architecture**: Dual-process design
 - **MCP Server** (`server.py`): Python >=3.11, runs via `uv`, proxies to the MCP server hosted by IDA
 - **IDA Plugin** (`ida_mcp/`): Runs inside IDA Pro, exposes MCP server over HTTP (port 13337+)
@@ -268,3 +270,38 @@ src/ida_pro_mcp/
 - **IDA Pro**: 8.3+ (9.0 recommended), **IDA Free not supported** (no plugin API)
 
 Use `idapyswitch` to upgrade IDA's Python interpreter if needed.
+
+## Pagination Standards (v1.5.0)
+
+All list-returning functions follow this pattern:
+
+```python
+@tool
+@idaread
+def list_items(
+    limit: Annotated[int, "Max items (default: N, max: M)"] = N,
+    offset: Annotated[int, "Skip first N items (default: 0)"] = 0,
+) -> dict:
+    # Enforce max limit
+    if limit <= 0 or limit > MAX:
+        limit = MAX
+
+    all_items = collect_items()
+    total = len(all_items)
+    paginated = all_items[offset : offset + limit]
+    has_more = offset + limit < total
+
+    return {
+        "data": paginated,
+        "count": len(paginated),
+        "total": total,
+        "cursor": {"next": offset + limit} if has_more else {"done": True},
+    }
+```
+
+**Default limits:**
+- xrefs: 500 (max: 5000)
+- callees/callers: 200 (max: 2000)
+- decompiled lines: 2000 (max: 10000)
+- callgraph nodes: 500 (max: 5000)
+- types/structs: 200-500 (max: 2000-5000)

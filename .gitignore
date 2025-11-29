@@ -25,3 +25,7 @@ venv*/
 
 # Generated server files
 server_generated.py
+
+# Local config
+CLAUDE.md
+.gitignore

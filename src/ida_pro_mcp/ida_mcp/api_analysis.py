@@ -87,11 +87,18 @@ def _get_cached_strings_dict() -> list[dict]:
 
 @tool
 @idaread
-def decompile(
+def decompile_function(
     addrs: Annotated[list[str] | str, "Function addresses to decompile"],
+    max_lines: Annotated[int, "Max lines per function (default: 2000, max: 10000, 0 for all)"] = 2000,
+    offset: Annotated[int, "Skip first N lines (default: 0)"] = 0,
 ) -> list[dict]:
-    """Decompile functions to pseudocode"""
+    """Decompile functions to pseudocode with line-based pagination"""
     addrs = normalize_list_input(addrs)
+
+    # Enforce max limit (0 means no limit up to 10000)
+    if max_lines < 0 or max_lines > 10000:
+        max_lines = 10000
+
     results = []
 
     for addr in addrs:
@@ -101,7 +108,9 @@ def decompile(
             if is_window_active():
                 ida_hexrays.open_pseudocode(start, ida_hexrays.OPF_REUSE)
             sv = cfunc.get_pseudocode()
-            code = ""
+
+            # Collect all lines first
+            all_lines = []
             for i, sl in enumerate(sv):
                 sl: ida_kernwin.simpleline_t
                 item = ida_hexrays.ctree_item_t()
@@ -116,23 +125,44 @@ def decompile(
                             except ValueError:
                                 pass
                 line = ida_lines.tag_remove(sl.line)
-                if len(code) > 0:
-                    code += "\n"
                 if not ea:
-                    code += f"/* line: {i} */ {line}"
+                    all_lines.append(f"/* line: {i} */ {line}")
                 else:
-                    code += f"/* line: {i}, address: {hex(ea)} */ {line}"
+                    all_lines.append(f"/* line: {i}, address: {hex(ea)} */ {line}")
 
-            results.append({"addr": addr, "code": code})
+            total_lines = len(all_lines)
+
+            # Apply pagination
+            if max_lines == 0:
+                paginated_lines = all_lines[offset:]
+                has_more = False
+            else:
+                paginated_lines = all_lines[offset : offset + max_lines]
+                has_more = offset + max_lines < total_lines
+
+            code = "\n".join(paginated_lines)
+
+            results.append({
+                "addr": addr,
+                "code": code,
+                "line_count": len(paginated_lines),
+                "total_lines": total_lines,
+                "cursor": {"next": offset + max_lines} if has_more else {"done": True},
+            })
         except Exception as e:
-            results.append({"addr": addr, "code": None, "error": str(e)})
+            results.append({
+                "addr": addr,
+                "code": None,
+                "error": str(e),
+                "cursor": {"done": True},
+            })
 
     return results
 
 
 @tool
 @idaread
-def disasm(
+def disassemble_function(
     addrs: Annotated[list[str] | str, "Function addresses to disassemble"],
     max_instructions: Annotated[
         int, "Max instructions per function (default: 5000, max: 50000)"
@@ -282,38 +312,70 @@ def disasm(
 
 @tool
 @idaread
-def xrefs_to(
+def get_xrefs_to(
     addrs: Annotated[list[str] | str, "Addresses to find cross-references to"],
+    limit: Annotated[int, "Max xrefs per address (default: 500, max: 5000)"] = 500,
+    offset: Annotated[int, "Skip first N xrefs (default: 0)"] = 0,
 ) -> list[dict]:
-    """Get all cross-references to specified addresses"""
+    """Get cross-references to specified addresses with pagination"""
     addrs = normalize_list_input(addrs)
+
+    # Enforce max limit
+    if limit <= 0 or limit > 5000:
+        limit = 5000
+
     results = []
 
     for addr in addrs:
         try:
-            xrefs = []
+            all_xrefs = []
             xref: ida_xref.xrefblk_t
             for xref in idautils.XrefsTo(parse_address(addr)):
-                xrefs += [
+                all_xrefs.append(
                     Xref(
                         addr=hex(xref.frm),
                         type="code" if xref.iscode else "data",
                         fn=get_function(xref.frm, raise_error=False),
                     )
-                ]
-            results.append({"addr": addr, "xrefs": xrefs})
+                )
+
+            # Apply pagination
+            total_xrefs = len(all_xrefs)
+            paginated_xrefs = all_xrefs[offset : offset + limit]
+            has_more = offset + limit < total_xrefs
+
+            results.append({
+                "addr": addr,
+                "xrefs": paginated_xrefs,
+                "count": len(paginated_xrefs),
+                "total": total_xrefs,
+                "cursor": {"next": offset + limit} if has_more else {"done": True},
+            })
         except Exception as e:
-            results.append({"addr": addr, "xrefs": None, "error": str(e)})
+            results.append({
+                "addr": addr,
+                "xrefs": None,
+                "error": str(e),
+                "cursor": {"done": True},
+            })
 
     return results
 
 
 @tool
 @idaread
-def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[dict]:
-    """Get cross-references to structure fields"""
+def get_xrefs_to_field(
+    queries: list[StructFieldQuery] | StructFieldQuery,
+    limit: Annotated[int, "Max xrefs per field (default: 500, max: 5000)"] = 500,
+    offset: Annotated[int, "Skip first N xrefs (default: 0)"] = 0,
+) -> list[dict]:
+    """Get cross-references to structure fields with pagination"""
     if isinstance(queries, dict):
         queries = [queries]
+
+    # Enforce max limit
+    if limit <= 0 or limit > 5000:
+        limit = 5000
 
     results = []
     til = ida_typeinf.get_idati()
@@ -324,6 +386,7 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
                 "field": q.get("field"),
                 "xrefs": [],
                 "error": "Failed to retrieve type library",
+                "cursor": {"done": True},
             }
             for q in queries
         ]
@@ -343,6 +406,7 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
                         "field": field_name,
                         "xrefs": [],
                         "error": f"Struct '{struct_name}' not found",
+                        "cursor": {"done": True},
                     }
                 )
                 continue
@@ -355,6 +419,7 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
                         "field": field_name,
                         "xrefs": [],
                         "error": f"Field '{field_name}' not found in '{struct_name}'",
+                        "cursor": {"done": True},
                     }
                 )
                 continue
@@ -367,21 +432,35 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
                         "field": field_name,
                         "xrefs": [],
                         "error": "Unable to get tid",
+                        "cursor": {"done": True},
                     }
                 )
                 continue
 
-            xrefs = []
+            all_xrefs = []
             xref: ida_xref.xrefblk_t
             for xref in idautils.XrefsTo(tid):
-                xrefs += [
+                all_xrefs.append(
                     Xref(
                         addr=hex(xref.frm),
                         type="code" if xref.iscode else "data",
                         fn=get_function(xref.frm, raise_error=False),
                     )
-                ]
-            results.append({"struct": struct_name, "field": field_name, "xrefs": xrefs})
+                )
+
+            # Apply pagination
+            total_xrefs = len(all_xrefs)
+            paginated_xrefs = all_xrefs[offset : offset + limit]
+            has_more = offset + limit < total_xrefs
+
+            results.append({
+                "struct": struct_name,
+                "field": field_name,
+                "xrefs": paginated_xrefs,
+                "count": len(paginated_xrefs),
+                "total": total_xrefs,
+                "cursor": {"next": offset + limit} if has_more else {"done": True},
+            })
         except Exception as e:
             results.append(
                 {
@@ -389,6 +468,7 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
                     "field": field_name,
                     "xrefs": [],
                     "error": str(e),
+                    "cursor": {"done": True},
                 }
             )
 
@@ -402,11 +482,18 @@ def xrefs_to_field(queries: list[StructFieldQuery] | StructFieldQuery) -> list[d
 
 @tool
 @idaread
-def callees(
+def get_callees(
     addrs: Annotated[list[str] | str, "Function addresses to get callees for"],
+    limit: Annotated[int, "Max callees per function (default: 200, max: 2000)"] = 200,
+    offset: Annotated[int, "Skip first N callees (default: 0)"] = 0,
 ) -> list[dict]:
-    """Get all functions called by the specified functions"""
+    """Get functions called by the specified functions with pagination"""
     addrs = normalize_list_input(addrs)
+
+    # Enforce max limit
+    if limit <= 0 or limit > 2000:
+        limit = 2000
+
     results = []
 
     for fn_addr in addrs:
@@ -414,12 +501,15 @@ def callees(
             func_start = parse_address(fn_addr)
             func = idaapi.get_func(func_start)
             if not func:
-                results.append(
-                    {"addr": fn_addr, "callees": None, "error": "No function found"}
-                )
+                results.append({
+                    "addr": fn_addr,
+                    "callees": None,
+                    "error": "No function found",
+                    "cursor": {"done": True},
+                })
                 continue
             func_end = idc.find_func_end(func_start)
-            callees: list[dict[str, str]] = []
+            all_callees: list[dict[str, str]] = []
             current_ea = func_start
             while current_ea < func_end:
                 insn = idaapi.insn_t()
@@ -435,7 +525,7 @@ def callees(
                         )
                         func_name = idc.get_name(target)
                         if func_name is not None:
-                            callees.append(
+                            all_callees.append(
                                 {
                                     "addr": hex(target),
                                     "name": func_name,
@@ -444,27 +534,51 @@ def callees(
                             )
                 current_ea = idc.next_head(current_ea, func_end)
 
-            unique_callee_tuples = {tuple(callee.items()) for callee in callees}
+            unique_callee_tuples = {tuple(callee.items()) for callee in all_callees}
             unique_callees = [dict(callee) for callee in unique_callee_tuples]
-            results.append({"addr": fn_addr, "callees": unique_callees})
+
+            # Apply pagination
+            total_callees = len(unique_callees)
+            paginated_callees = unique_callees[offset : offset + limit]
+            has_more = offset + limit < total_callees
+
+            results.append({
+                "addr": fn_addr,
+                "callees": paginated_callees,
+                "count": len(paginated_callees),
+                "total": total_callees,
+                "cursor": {"next": offset + limit} if has_more else {"done": True},
+            })
         except Exception as e:
-            results.append({"addr": fn_addr, "callees": None, "error": str(e)})
+            results.append({
+                "addr": fn_addr,
+                "callees": None,
+                "error": str(e),
+                "cursor": {"done": True},
+            })
 
     return results
 
 
 @tool
 @idaread
-def callers(
+def get_callers(
     addrs: Annotated[list[str] | str, "Function addresses to get callers for"],
+    limit: Annotated[int, "Max callers per function (default: 200, max: 2000)"] = 200,
+    offset: Annotated[int, "Skip first N callers (default: 0)"] = 0,
 ) -> list[dict]:
-    """Get all functions that call the specified functions"""
+    """Get functions that call the specified functions with pagination"""
     addrs = normalize_list_input(addrs)
+
+    # Enforce max limit
+    if limit <= 0 or limit > 2000:
+        limit = 2000
+
     results = []
 
     for fn_addr in addrs:
         try:
-            callers = {}
+            all_callers = {}
             for caller_addr in idautils.CodeRefsTo(parse_address(fn_addr), 0):
                 func = get_function(caller_addr, raise_error=False)
                 if not func:
@@ -477,27 +591,63 @@ def callers(
                     idaapi.NN_callni,
                 ]:
                     continue
-                callers[func["addr"]] = func
+                all_callers[func["addr"]] = func
 
-            results.append({"addr": fn_addr, "callers": list(callers.values())})
+            caller_list = list(all_callers.values())
+
+            # Apply pagination
+            total_callers = len(caller_list)
+            paginated_callers = caller_list[offset : offset + limit]
+            has_more = offset + limit < total_callers
+
+            results.append({
+                "addr": fn_addr,
+                "callers": paginated_callers,
+                "count": len(paginated_callers),
+                "total": total_callers,
+                "cursor": {"next": offset + limit} if has_more else {"done": True},
+            })
         except Exception as e:
-            results.append({"addr": fn_addr, "callers": None, "error": str(e)})
+            results.append({
+                "addr": fn_addr,
+                "callers": None,
+                "error": str(e),
+                "cursor": {"done": True},
+            })
 
     return results
 
 
 @tool
 @idaread
-def entrypoints() -> list[Function]:
-    """Get entry points"""
-    result = []
+def get_entry_points(
+    limit: Annotated[int, "Max entrypoints to return (default: 500, max: 5000)"] = 500,
+    offset: Annotated[int, "Skip first N entrypoints (default: 0)"] = 0,
+) -> dict:
+    """Get entry points with pagination"""
+    # Enforce max limit
+    if limit <= 0 or limit > 5000:
+        limit = 5000
+
+    all_entries = []
     for i in range(ida_entry.get_entry_qty()):
         ordinal = ida_entry.get_entry_ordinal(i)
         addr = ida_entry.get_entry(ordinal)
         func = get_function(addr, raise_error=False)
         if func is not None:
-            result.append(func)
-    return result
+            all_entries.append(func)
+
+    # Apply pagination
+    total_entries = len(all_entries)
+    paginated_entries = all_entries[offset : offset + limit]
+    has_more = offset + limit < total_entries
+
+    return {
+        "entrypoints": paginated_entries,
+        "count": len(paginated_entries),
+        "total": total_entries,
+        "cursor": {"next": offset + limit} if has_more else {"done": True},
+    }
 
 
 # ============================================================================
@@ -509,8 +659,15 @@ def entrypoints() -> list[Function]:
 @idaread
 def analyze_funcs(
     addrs: Annotated[list[str] | str, "Function addresses to comprehensively analyze"],
+    include_code: Annotated[bool, "Include decompiled pseudocode (default: True)"] = True,
+    include_asm: Annotated[bool, "Include assembly (default: True)"] = True,
+    max_xrefs: Annotated[int, "Max xrefs per direction (default: 100)"] = 100,
+    max_calls: Annotated[int, "Max callees/callers (default: 50)"] = 50,
+    max_strings: Annotated[int, "Max strings (default: 100)"] = 100,
+    max_constants: Annotated[int, "Max constants (default: 100)"] = 100,
+    max_blocks: Annotated[int, "Max basic blocks (default: 200)"] = 200,
 ) -> list[FunctionAnalysis]:
-    """Comprehensive function analysis: decompilation, xrefs, callees, strings, constants, blocks"""
+    """Comprehensive function analysis with configurable limits to prevent token overflow"""
     addrs = normalize_list_input(addrs)
     results = []
     for addr in addrs:
@@ -537,10 +694,12 @@ def analyze_funcs(
                 )
                 continue
 
-            # Get basic blocks
+            # Get basic blocks with limit
             flowchart = idaapi.FlowChart(func)
             blocks = []
-            for block in flowchart:
+            for i, block in enumerate(flowchart):
+                if i >= max_blocks:
+                    break
                 blocks.append(
                     {
                         "start": hex(block.start_ea),
@@ -549,24 +708,36 @@ def analyze_funcs(
                     }
                 )
 
-            result = FunctionAnalysis(
-                addr=addr,
-                name=ida_funcs.get_func_name(func.start_ea),
-                code=decompile_function_safe(ea),
-                asm=get_assembly_lines(ea),
-                xto=[
+            # Collect xrefs with limit
+            xto_list = []
+            for i, x in enumerate(idautils.XrefsTo(ea, 0)):
+                if i >= max_xrefs:
+                    break
+                xto_list.append(
                     Xref(
                         addr=hex(x.frm),
                         type="code" if x.iscode else "data",
                         fn=get_function(x.frm, raise_error=False),
                     )
-                    for x in idautils.XrefsTo(ea, 0)
-                ],
-                xfrom=get_xrefs_from_internal(ea),
-                callees=get_callees(addr),
-                callers=get_callers(addr),
-                strings=extract_function_strings(ea),
-                constants=extract_function_constants(ea),
+                )
+
+            xfrom_list = get_xrefs_from_internal(ea)[:max_xrefs]
+            callees_list = get_callees(addr)[:max_calls]
+            callers_list = get_callers(addr)[:max_calls]
+            strings_list = extract_function_strings(ea)[:max_strings]
+            constants_list = extract_function_constants(ea)[:max_constants]
+
+            result = FunctionAnalysis(
+                addr=addr,
+                name=ida_funcs.get_func_name(func.start_ea),
+                code=decompile_function_safe(ea) if include_code else None,
+                asm=get_assembly_lines(ea) if include_asm else None,
+                xto=xto_list,
+                xfrom=xfrom_list,
+                callees=callees_list,
+                callers=callers_list,
+                strings=strings_list,
+                constants=constants_list,
                 blocks=blocks,
                 error=None,
             )
@@ -836,10 +1007,21 @@ def basic_blocks(
 
 @tool
 @idaread
-def find_paths(queries: list[PathQuery] | PathQuery) -> list[dict]:
-    """Find execution paths between source and target addresses"""
+def find_paths(
+    queries: list[PathQuery] | PathQuery,
+    max_paths: Annotated[int, "Maximum paths to find per query (default: 10, max: 50)"] = 10,
+    max_depth: Annotated[int, "Maximum path depth in blocks (default: 20, max: 100)"] = 20,
+) -> list[dict]:
+    """Find execution paths between source and target addresses with configurable limits"""
     if isinstance(queries, dict):
         queries = [queries]
+
+    # Enforce limits
+    if max_paths <= 0 or max_paths > 50:
+        max_paths = 50
+    if max_depth <= 0 or max_depth > 100:
+        max_depth = 100
+
     results = []
 
     for query in queries:
@@ -888,7 +1070,7 @@ def find_paths(queries: list[PathQuery] | PathQuery) -> list[dict]:
         paths = []
         queue = [([source_block], {source_block.id})]
 
-        while queue and len(paths) < 10:  # Limit paths
+        while queue and len(paths) < max_paths:
             path, visited = queue.pop(0)
             current = path[-1]
 
@@ -897,7 +1079,7 @@ def find_paths(queries: list[PathQuery] | PathQuery) -> list[dict]:
                 continue
 
             for succ in current.succs():
-                if succ.id not in visited and len(path) < 20:  # Limit depth
+                if succ.id not in visited and len(path) < max_depth:
                     queue.append((path + [succ], visited | {succ.id}))
 
         results.append(
@@ -905,6 +1087,7 @@ def find_paths(queries: list[PathQuery] | PathQuery) -> list[dict]:
                 "source": query["source"],
                 "target": query["target"],
                 "paths": paths,
+                "path_count": len(paths),
                 "reachable": len(paths) > 0,
                 "error": None,
             }
@@ -1199,9 +1382,20 @@ def export_funcs(
     format: Annotated[
         str, "Export format: json (default), c_header, or prototypes"
     ] = "json",
+    include_code: Annotated[bool, "Include decompiled pseudocode in json format"] = True,
+    include_asm: Annotated[bool, "Include assembly in json format"] = True,
+    max_funcs: Annotated[int, "Max functions to export (default: 20, max: 100)"] = 20,
 ) -> dict:
-    """Export function data in various formats"""
+    """Export function data in various formats with configurable limits"""
     addrs = normalize_list_input(addrs)
+
+    # Enforce max functions limit
+    if max_funcs <= 0 or max_funcs > 100:
+        max_funcs = 100
+
+    truncated = len(addrs) > max_funcs
+    addrs = addrs[:max_funcs]
+
     results = []
 
     for addr in addrs:
@@ -1221,8 +1415,10 @@ def export_funcs(
             }
 
             if format == "json":
-                func_data["asm"] = get_assembly_lines(ea)
-                func_data["code"] = decompile_function_safe(ea)
+                if include_asm:
+                    func_data["asm"] = get_assembly_lines(ea)
+                if include_code:
+                    func_data["code"] = decompile_function_safe(ea)
                 func_data["xrefs"] = get_all_xrefs(ea)
 
             results.append(func_data)
@@ -1236,7 +1432,7 @@ def export_funcs(
         for func in results:
             if "prototype" in func and func["prototype"]:
                 lines.append(f"{func['prototype']};")
-        return {"format": "c_header", "content": "\n".join(lines)}
+        return {"format": "c_header", "content": "\n".join(lines), "truncated": truncated}
 
     elif format == "prototypes":
         # Just prototypes
@@ -1246,9 +1442,9 @@ def export_funcs(
                 prototypes.append(
                     {"name": func.get("name"), "prototype": func["prototype"]}
                 )
-        return {"format": "prototypes", "functions": prototypes}
+        return {"format": "prototypes", "functions": prototypes, "truncated": truncated}
 
-    return {"format": "json", "functions": results}
+    return {"format": "json", "functions": results, "count": len(results), "truncated": truncated}
 
 
 # ============================================================================
@@ -1262,10 +1458,21 @@ def callgraph(
     roots: Annotated[
         list[str] | str, "Root function addresses to start call graph traversal from"
     ],
-    max_depth: Annotated[int, "Maximum depth for call graph traversal"] = 5,
+    max_depth: Annotated[int, "Maximum depth for call graph traversal (default: 5)"] = 5,
+    max_nodes: Annotated[int, "Maximum nodes to return (default: 500, max: 5000)"] = 500,
+    max_edges: Annotated[int, "Maximum edges to return (default: 2000, max: 10000)"] = 2000,
 ) -> list[dict]:
-    """Build call graph starting from root functions"""
+    """Build call graph starting from root functions with node and edge limits"""
     roots = normalize_list_input(roots)
+
+    # Enforce max limits
+    if max_depth <= 0 or max_depth > 20:
+        max_depth = 20
+    if max_nodes <= 0 or max_nodes > 5000:
+        max_nodes = 5000
+    if max_edges <= 0 or max_edges > 10000:
+        max_edges = 10000
+
     results = []
 
     for root in roots:
@@ -1279,16 +1486,22 @@ def callgraph(
                         "error": "Function not found",
                         "nodes": [],
                         "edges": [],
+                        "truncated": False,
                     }
                 )
                 continue
 
             nodes = {}
-            edges = []
+            edges_set = set()  # Use set for deduplication
             visited = set()
+            truncated = False
 
             def traverse(addr, depth):
+                nonlocal truncated
                 if depth > max_depth or addr in visited:
+                    return
+                if len(nodes) >= max_nodes or len(edges_set) >= max_edges:
+                    truncated = True
                     return
                 visited.add(addr)
 
@@ -1305,32 +1518,49 @@ def callgraph(
 
                 # Get callees
                 for item_ea in idautils.FuncItems(f.start_ea):
+                    if len(nodes) >= max_nodes or len(edges_set) >= max_edges:
+                        truncated = True
+                        return
                     for xref in idautils.CodeRefsFrom(item_ea, 0):
                         callee_func = idaapi.get_func(xref)
                         if callee_func:
-                            edges.append(
-                                {
-                                    "from": hex(addr),
-                                    "to": hex(callee_func.start_ea),
-                                    "type": "call",
-                                }
-                            )
+                            # Deduplicate edges using tuple key
+                            edge_key = (hex(addr), hex(callee_func.start_ea))
+                            if edge_key not in edges_set:
+                                edges_set.add(edge_key)
                             traverse(callee_func.start_ea, depth + 1)
 
             traverse(ea, 0)
+
+            # Convert edge set to list of dicts
+            edges = [
+                {"from": e[0], "to": e[1], "type": "call"}
+                for e in edges_set
+            ]
 
             results.append(
                 {
                     "root": root,
                     "nodes": list(nodes.values()),
                     "edges": edges,
+                    "node_count": len(nodes),
+                    "edge_count": len(edges),
                     "max_depth": max_depth,
+                    "max_nodes": max_nodes,
+                    "max_edges": max_edges,
+                    "truncated": truncated,
                     "error": None,
                 }
             )
 
         except Exception as e:
-            results.append({"root": root, "error": str(e), "nodes": [], "edges": []})
+            results.append({
+                "root": root,
+                "error": str(e),
+                "nodes": [],
+                "edges": [],
+                "truncated": False,
+            })
 
     return results
 
@@ -1346,9 +1576,18 @@ def xref_matrix(
     entities: Annotated[
         list[str] | str, "Addresses to build cross-reference matrix for"
     ],
+    max_entities: Annotated[int, "Max entities to process (default: 50, max: 200)"] = 50,
 ) -> dict:
-    """Build matrix showing cross-references between entities"""
+    """Build matrix showing cross-references between entities (O(n^2) complexity)"""
     entities = normalize_list_input(entities)
+
+    # Enforce max entities to prevent O(n^2) explosion
+    if max_entities <= 0 or max_entities > 200:
+        max_entities = 200
+
+    truncated = len(entities) > max_entities
+    entities = entities[:max_entities]
+
     matrix = {}
 
     for source in entities:
@@ -1374,7 +1613,12 @@ def xref_matrix(
         except Exception:
             matrix[source] = {"error": "Failed to process"}
 
-    return {"matrix": matrix, "entities": entities}
+    return {
+        "matrix": matrix,
+        "entities": entities,
+        "entity_count": len(entities),
+        "truncated": truncated,
+    }
 
 
 # ============================================================================
