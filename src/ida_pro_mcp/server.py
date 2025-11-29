@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 import glob
 
+try:
+    from toon import encode as toon_encode
+    TOON_AVAILABLE = True
+except ImportError:
+    TOON_AVAILABLE = False
+    toon_encode = None
+
 if TYPE_CHECKING:
     from ida_pro_mcp.ida_mcp.zeromcp import McpServer
     from ida_pro_mcp.ida_mcp.zeromcp.jsonrpc import JsonRpcResponse, JsonRpcRequest
@@ -24,6 +31,39 @@ else:
 
 IDA_HOST = "127.0.0.1"
 IDA_PORT = 13337
+USE_TOON = False  # Enable TOON output format for token efficiency
+
+
+def convert_to_toon(response: dict) -> dict:
+    """Convert JSON-RPC result to TOON format for token efficiency.
+
+    TOON (Token-Oriented Object Notation) reduces tokens by 30-60% compared to JSON,
+    which is especially useful for large IDA data like function lists, strings, etc.
+
+    Only converts the text content inside MCP tool results, preserving the
+    required MCP response structure.
+    """
+    if not toon_encode or "result" not in response:
+        return response
+
+    result = response["result"]
+
+    # Only handle MCP content format: {"content": [{"type": "text", "text": "..."}]}
+    # Other response types (initialize, errors, etc.) must keep their structure
+    if isinstance(result, dict) and "content" in result:
+        content = result["content"]
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    # Try to parse the text as JSON and convert to TOON
+                    try:
+                        text_data = json.loads(item["text"])
+                        item["text"] = toon_encode(text_data)
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Keep original if not valid JSON
+
+    return response
+
 
 mcp = McpServer("ida-pro-mcp")
 dispatch_original = mcp.registry.dispatch
@@ -50,7 +90,13 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
         conn.request("POST", "/mcp", request, {"Content-Type": "application/json"})
         response = conn.getresponse()
         data = response.read().decode()
-        return json.loads(data)
+        result = json.loads(data)
+
+        # Convert result to TOON format if enabled
+        if USE_TOON and TOON_AVAILABLE and toon_encode and "result" in result:
+            result = convert_to_toon(result)
+
+        return result
     except Exception as e:
         full_info = traceback.format_exc()
         id = request_obj.get("id")
@@ -848,6 +894,11 @@ def main():
     parser.add_argument(
         "--config", action="store_true", help="Generate MCP config JSON"
     )
+    parser.add_argument(
+        "--toon",
+        action="store_true",
+        help="Enable TOON output format for 30-60%% token reduction",
+    )
     args = parser.parse_args()
 
     # Parse IDA RPC server argument
@@ -856,6 +907,16 @@ def main():
         raise Exception(f"Invalid IDA RPC server: {args.ida_rpc}")
     IDA_HOST = ida_rpc.hostname
     IDA_PORT = ida_rpc.port
+
+    # Enable TOON output format
+    global USE_TOON
+    if args.toon:
+        if not TOON_AVAILABLE:
+            print("Warning: python-toon not installed, TOON output disabled", file=sys.stderr)
+            print("Install with: pip install python-toon", file=sys.stderr)
+        else:
+            USE_TOON = True
+            print("TOON output format enabled", file=sys.stderr)
 
     if args.install and args.uninstall:
         print("Cannot install and uninstall at the same time")
