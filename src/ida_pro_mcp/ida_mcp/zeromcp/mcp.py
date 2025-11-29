@@ -12,15 +12,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer, HTTPServer
 
 # Setup file logging for debugging
 _log_file = os.environ.get("MCP_LOG_FILE")
-if _log_file:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(_log_file, mode="a"), logging.StreamHandler(sys.stderr)]
-    )
-else:
-    logging.basicConfig(level=logging.WARNING)
 _logger = logging.getLogger("zeromcp")
+if _log_file:
+    _logger.setLevel(logging.DEBUG)
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    _fh = logging.FileHandler(_log_file, mode="a")
+    _fh.setFormatter(_fmt)
+    _logger.addHandler(_fh)
+else:
+    _logger.setLevel(logging.WARNING)
 from typing import Any, Callable, Union, Annotated, BinaryIO, NotRequired, get_origin, get_args, get_type_hints, is_typeddict
 from types import UnionType
 from urllib.parse import urlparse, parse_qs

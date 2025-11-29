@@ -15,15 +15,18 @@ import glob
 
 # Setup logging
 _log_file = os.environ.get("MCP_LOG_FILE")
-if _log_file:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(_log_file, mode="a"), logging.StreamHandler(sys.stderr)]
-    )
-else:
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 _logger = logging.getLogger("ida-pro-mcp")
+if _log_file:
+    _logger.setLevel(logging.DEBUG)
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    _fh = logging.FileHandler(_log_file, mode="a")
+    _fh.setFormatter(_fmt)
+    _logger.addHandler(_fh)
+    _sh = logging.StreamHandler(sys.stderr)
+    _sh.setFormatter(_fmt)
+    _logger.addHandler(_sh)
+else:
+    _logger.setLevel(logging.WARNING)
 
 try:
     from toon import encode as toon_encode

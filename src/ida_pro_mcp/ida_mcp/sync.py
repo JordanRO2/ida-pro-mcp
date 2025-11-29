@@ -17,13 +17,15 @@ ida_major, ida_minor = map(int, idaapi.get_kernel_version().split("."))
 
 # Setup logging
 _log_file = os.environ.get("MCP_LOG_FILE")
-if _log_file:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(_log_file, mode="a")]
-    )
 _sync_logger = logging.getLogger("ida-mcp-sync")
+if _log_file:
+    _sync_logger.setLevel(logging.DEBUG)
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    _fh = logging.FileHandler(_log_file, mode="a")
+    _fh.setFormatter(_fmt)
+    _sync_logger.addHandler(_fh)
+else:
+    _sync_logger.setLevel(logging.WARNING)
 
 
 class IDAError(McpToolError):
