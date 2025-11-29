@@ -77,26 +77,13 @@ def _sync_wrapper(ff, safety_mode: IDASafety):
             raise IDASyncError(error_str)
 
         call_stack.put(func_name)
-        wait_shown = False
         try:
-            # Show wait box to prevent IDA from appearing frozen
-            try:
-                ida_kernwin.show_wait_box(f"HIDECANCEL\nMCP: {func_name}...")
-                wait_shown = True
-            except Exception as e:
-                _sync_logger.warning(f"[SYNC] {func_name} - failed to show wait box: {e}")
-
             result = ff()
             res_container.put(result)
         except Exception as x:
             _sync_logger.error(f"[SYNC] {func_name} - exception: {x}")
             res_container.put(x)
         finally:
-            if wait_shown:
-                try:
-                    ida_kernwin.hide_wait_box()
-                except Exception as e:
-                    _sync_logger.warning(f"[SYNC] {func_name} - failed to hide wait box: {e}")
             call_stack.get()
             _sync_logger.debug(f"[SYNC] {func_name} - finished ({time.time() - exec_start:.2f}s)")
 
