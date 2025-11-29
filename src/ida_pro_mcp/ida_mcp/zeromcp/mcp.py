@@ -1,12 +1,26 @@
 import re
+import os
 import sys
 import time
 import uuid
 import json
 import inspect
+import logging
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer, HTTPServer
+
+# Setup file logging for debugging
+_log_file = os.environ.get("MCP_LOG_FILE")
+if _log_file:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.FileHandler(_log_file, mode="a"), logging.StreamHandler(sys.stderr)]
+    )
+else:
+    logging.basicConfig(level=logging.WARNING)
+_logger = logging.getLogger("zeromcp")
 from typing import Any, Callable, Union, Annotated, BinaryIO, NotRequired, get_origin, get_args, get_type_hints, is_typeddict
 from types import UnionType
 from urllib.parse import urlparse, parse_qs
@@ -205,9 +219,17 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_mcp_post(self, body: bytes):
+        # Log request
+        _logger.debug(f"MCP Request: {body.decode('utf-8', errors='replace')[:2000]}")
+
         # Dispatch to MCP registry
         setattr(self.mcp_server._protocol_version, "data", "2025-06-18")
-        response = self.mcp_server.registry.dispatch(body)
+        try:
+            response = self.mcp_server.registry.dispatch(body)
+            _logger.debug(f"MCP Response: {json.dumps(response)[:2000] if response else 'None'}")
+        except Exception as e:
+            _logger.error(f"MCP Error: {e}\n{traceback.format_exc()}")
+            raise
 
         def send_response(status: int, body: bytes):
             self.send_response(status)

@@ -8,9 +8,22 @@ import tempfile
 import traceback
 import tomllib
 import tomli_w
+import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 import glob
+
+# Setup logging
+_log_file = os.environ.get("MCP_LOG_FILE")
+if _log_file:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.FileHandler(_log_file, mode="a"), logging.StreamHandler(sys.stderr)]
+    )
+else:
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+_logger = logging.getLogger("ida-pro-mcp")
 
 try:
     from toon import encode as toon_encode
@@ -71,17 +84,24 @@ dispatch_original = mcp.registry.dispatch
 
 def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse | None:
     """Dispatch JSON-RPC requests to the MCP server registry"""
+    import time
+    start_time = time.time()
+
     if not isinstance(request, dict):
         request_obj: JsonRpcRequest = json.loads(request)
     else:
         request_obj: JsonRpcRequest = request  # type: ignore
 
-    if request_obj["method"] == "initialize":
+    method = request_obj.get("method", "unknown")
+    req_id = request_obj.get("id")
+    _logger.debug(f"[{req_id}] -> {method}: {json.dumps(request_obj.get('params', {}))[:500]}")
+
+    if method == "initialize":
         return dispatch_original(request)
-    elif request_obj["method"].startswith("notifications/"):
+    elif method.startswith("notifications/"):
         return dispatch_original(request)
 
-    conn = http.client.HTTPConnection(IDA_HOST, IDA_PORT, timeout=30)
+    conn = http.client.HTTPConnection(IDA_HOST, IDA_PORT, timeout=120)  # Increased timeout for long ops
     try:
         if isinstance(request, dict):
             request = json.dumps(request)
@@ -92,15 +112,20 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
         data = response.read().decode()
         result = json.loads(data)
 
+        elapsed = time.time() - start_time
+        _logger.debug(f"[{req_id}] <- {method} ({elapsed:.2f}s): {json.dumps(result)[:500]}")
+
         # Convert result to TOON format if enabled
         if USE_TOON and TOON_AVAILABLE and toon_encode and "result" in result:
             result = convert_to_toon(result)
 
         return result
     except Exception as e:
+        elapsed = time.time() - start_time
         full_info = traceback.format_exc()
-        id = request_obj.get("id")
-        if id is None:
+        _logger.error(f"[{req_id}] ERROR {method} ({elapsed:.2f}s): {e}\n{full_info}")
+
+        if req_id is None:
             return None  # Notification, no response needed
 
         if sys.platform == "darwin":
@@ -115,7 +140,7 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
                     "message": f"Failed to connect to IDA Pro! Did you run Edit -> Plugins -> MCP ({shortcut}) to start the server?\n{full_info}",
                     "data": str(e),
                 },
-                "id": id,
+                "id": req_id,
             }
         )
     finally:

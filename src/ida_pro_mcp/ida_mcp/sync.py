@@ -1,3 +1,5 @@
+import os
+import time
 import logging
 import queue
 import functools
@@ -12,6 +14,16 @@ from .rpc import McpToolError
 # ============================================================================
 
 ida_major, ida_minor = map(int, idaapi.get_kernel_version().split("."))
+
+# Setup logging
+_log_file = os.environ.get("MCP_LOG_FILE")
+if _log_file:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.FileHandler(_log_file, mode="a")]
+    )
+_sync_logger = logging.getLogger("ida-mcp-sync")
 
 
 class IDAError(McpToolError):
@@ -48,23 +60,36 @@ def _sync_wrapper(ff, safety_mode: IDASafety):
 
     # NOTE: This is not actually a queue, there is one item in it at most
     res_container = queue.Queue()
+    start_time = time.time()
+    func_name = ff.__name__
+    mode_name = "READ" if safety_mode == IDASafety.SAFE_READ else "WRITE"
+    _sync_logger.debug(f"[SYNC] {func_name} ({mode_name}) - queued for execute_sync")
 
     def runned():
+        exec_start = time.time()
+        _sync_logger.debug(f"[SYNC] {func_name} - started on main thread (waited {exec_start - start_time:.2f}s)")
+
         if not call_stack.empty():
             last_func_name = call_stack.get()
-            error_str = f"Call stack is not empty while calling the function {ff.__name__} from {last_func_name}"
+            error_str = f"Call stack is not empty while calling the function {func_name} from {last_func_name}"
             raise IDASyncError(error_str)
 
-        call_stack.put((ff.__name__))
+        call_stack.put(func_name)
         try:
-            res_container.put(ff())
+            result = ff()
+            res_container.put(result)
         except Exception as x:
+            _sync_logger.error(f"[SYNC] {func_name} - exception: {x}")
             res_container.put(x)
         finally:
             call_stack.get()
+            _sync_logger.debug(f"[SYNC] {func_name} - finished ({time.time() - exec_start:.2f}s)")
 
     idaapi.execute_sync(runned, safety_mode)
     res = res_container.get()
+    total_time = time.time() - start_time
+    if total_time > 5:
+        _sync_logger.warning(f"[SYNC] {func_name} - slow operation ({total_time:.2f}s total)")
     if isinstance(res, Exception):
         raise res
     return res

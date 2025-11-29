@@ -133,11 +133,38 @@ All paginated functions now return consistent cursor objects:
 - [x] `find_crypto_constants()` - Detect AES, MD5, SHA, Blowfish, TEA constants
 - [x] `decode_strings()` - Attempt string decoding (XOR, base64, rot13, hex)
 
+### TOON Output Format
+- [x] Added `--toon` flag to enable TOON (Token-Oriented Object Notation) output
+- [x] 30-60% token reduction compared to JSON
+- [x] Only converts tool result text, preserving MCP protocol structure
+- [x] Requires `python-toon>=0.1.3` dependency
+
+### Debug Logging
+- [x] Added `MCP_LOG_FILE` environment variable for file-based logging
+- [x] Logs requests/responses in WSL proxy (server.py)
+- [x] Logs HTTP requests in IDA plugin (zeromcp/mcp.py)
+- [x] Logs IDA sync operations with timing (sync.py)
+- [x] Warns on slow operations (>5 seconds)
+
+Usage:
+```bash
+# WSL side
+export MCP_LOG_FILE=/tmp/mcp_debug.log
+
+# Windows/IDA side
+set MCP_LOG_FILE=C:\temp\mcp_debug.log
+```
+
+### Connection Improvements
+- [x] Increased HTTP timeout from 30s to 120s for long operations
+- [x] Fixed `--ida-rpc` argument not updating global connection settings
+
 ## Planned
 
 ### Performance Optimizations
 - [ ] Lazy loading for structure members
 - [ ] Streaming responses for very large results
+- [ ] Async/non-blocking IDA operations (reduce UI freezing)
 
 ### New Features
 - [ ] Symbolic execution helpers
