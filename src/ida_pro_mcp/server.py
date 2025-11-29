@@ -902,6 +902,7 @@ def main():
     args = parser.parse_args()
 
     # Parse IDA RPC server argument
+    global IDA_HOST, IDA_PORT
     ida_rpc = urlparse(args.ida_rpc)
     if ida_rpc.hostname is None or ida_rpc.port is None:
         raise Exception(f"Invalid IDA RPC server: {args.ida_rpc}")
