@@ -13,20 +13,15 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 import glob
 
-# Setup logging
-_log_file = os.environ.get("MCP_LOG_FILE")
+# Setup logging - always log to mcp_debug.log in script directory
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_log_file = os.environ.get("MCP_LOG_FILE", os.path.join(_script_dir, "mcp_debug.log"))
 _logger = logging.getLogger("ida-pro-mcp")
-if _log_file:
-    _logger.setLevel(logging.DEBUG)
-    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    _fh = logging.FileHandler(_log_file, mode="a")
-    _fh.setFormatter(_fmt)
-    _logger.addHandler(_fh)
-    _sh = logging.StreamHandler(sys.stderr)
-    _sh.setFormatter(_fmt)
-    _logger.addHandler(_sh)
-else:
-    _logger.setLevel(logging.WARNING)
+_logger.setLevel(logging.DEBUG)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_fh = logging.FileHandler(_log_file, mode="a")
+_fh.setFormatter(_fmt)
+_logger.addHandler(_fh)
 
 try:
     from toon import encode as toon_encode

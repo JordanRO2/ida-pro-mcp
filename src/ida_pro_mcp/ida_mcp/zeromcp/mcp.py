@@ -10,17 +10,15 @@ import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer, HTTPServer
 
-# Setup file logging for debugging
-_log_file = os.environ.get("MCP_LOG_FILE")
+# Setup logging - always log to mcp_ida_debug.log in plugin directory
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+_log_file = os.environ.get("MCP_LOG_FILE", os.path.join(_plugin_dir, "..", "mcp_ida_debug.log"))
 _logger = logging.getLogger("zeromcp")
-if _log_file:
-    _logger.setLevel(logging.DEBUG)
-    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    _fh = logging.FileHandler(_log_file, mode="a")
-    _fh.setFormatter(_fmt)
-    _logger.addHandler(_fh)
-else:
-    _logger.setLevel(logging.WARNING)
+_logger.setLevel(logging.DEBUG)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_fh = logging.FileHandler(_log_file, mode="a")
+_fh.setFormatter(_fmt)
+_logger.addHandler(_fh)
 from typing import Any, Callable, Union, Annotated, BinaryIO, NotRequired, get_origin, get_args, get_type_hints, is_typeddict
 from types import UnionType
 from urllib.parse import urlparse, parse_qs

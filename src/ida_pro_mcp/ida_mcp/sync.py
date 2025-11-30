@@ -15,17 +15,15 @@ from .rpc import McpToolError
 
 ida_major, ida_minor = map(int, idaapi.get_kernel_version().split("."))
 
-# Setup logging
-_log_file = os.environ.get("MCP_LOG_FILE")
+# Setup logging - always log to mcp_ida_debug.log in plugin directory
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+_log_file = os.environ.get("MCP_LOG_FILE", os.path.join(_plugin_dir, "mcp_ida_debug.log"))
 _sync_logger = logging.getLogger("ida-mcp-sync")
-if _log_file:
-    _sync_logger.setLevel(logging.DEBUG)
-    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    _fh = logging.FileHandler(_log_file, mode="a")
-    _fh.setFormatter(_fmt)
-    _sync_logger.addHandler(_fh)
-else:
-    _sync_logger.setLevel(logging.WARNING)
+_sync_logger.setLevel(logging.DEBUG)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_fh = logging.FileHandler(_log_file, mode="a")
+_fh.setFormatter(_fmt)
+_sync_logger.addHandler(_fh)
 
 
 class IDAError(McpToolError):
