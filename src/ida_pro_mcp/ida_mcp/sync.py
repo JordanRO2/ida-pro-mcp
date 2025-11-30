@@ -78,12 +78,15 @@ def _sync_wrapper(ff, safety_mode: IDASafety):
 
         call_stack.put(func_name)
         try:
+            # Show wait dialog to indicate IDA is processing
+            ida_kernwin.show_wait_box(f"MCP: {func_name}...")
             result = ff()
             res_container.put(result)
         except Exception as x:
             _sync_logger.error(f"[SYNC] {func_name} - exception: {x}")
             res_container.put(x)
         finally:
+            ida_kernwin.hide_wait_box()
             call_stack.get()
             _sync_logger.debug(f"[SYNC] {func_name} - finished ({time.time() - exec_start:.2f}s)")
 
