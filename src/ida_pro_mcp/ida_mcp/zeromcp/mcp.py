@@ -222,23 +222,14 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
         # Log request
         _logger.debug(f"MCP Request: {body.decode('utf-8', errors='replace')[:2000]}")
 
-        # Serialize requests to prevent IDA main thread contention
-        # Multiple concurrent requests would all block on execute_sync, causing timeouts
-        self.mcp_server._request_queue_size += 1
-        queue_pos = self.mcp_server._request_queue_size
-        if queue_pos > 1:
-            _logger.debug(f"Request queued (position {queue_pos})")
-
-        with self.mcp_server._request_lock:
-            self.mcp_server._request_queue_size -= 1
-            # Dispatch to MCP registry
-            setattr(self.mcp_server._protocol_version, "data", "2025-06-18")
-            try:
-                response = self.mcp_server.registry.dispatch(body)
-                _logger.debug(f"MCP Response: {json.dumps(response)[:2000] if response else 'None'}")
-            except Exception as e:
-                _logger.error(f"MCP Error: {e}\n{traceback.format_exc()}")
-                raise
+        # Dispatch to MCP registry (HTTPServer handles requests sequentially)
+        setattr(self.mcp_server._protocol_version, "data", "2025-06-18")
+        try:
+            response = self.mcp_server.registry.dispatch(body)
+            _logger.debug(f"MCP Response: {json.dumps(response)[:2000] if response else 'None'}")
+        except Exception as e:
+            _logger.error(f"MCP Error: {e}\n{traceback.format_exc()}")
+            raise
 
         def send_response(status: int, body: bytes):
             self.send_response(status)
@@ -269,8 +260,6 @@ class McpServer:
         self._running = False
         self._sse_connections: dict[str, _McpSseConnection] = {}
         self._protocol_version = threading.local()
-        self._request_lock = threading.Lock()  # Serialize requests to avoid IDA main thread contention
-        self._request_queue_size = 0
 
         # Register MCP protocol methods with correct names
         self.registry = JsonRpcRegistry()

@@ -98,12 +98,8 @@ def _sync_wrapper(ff, safety_mode: IDASafety):
 
 
 def sync_wrapper(ff, safety_mode: IDASafety):
-    """Wrapper to enable batch mode during IDA synchronization."""
-    old_batch = idc.batch(1)
-    try:
-        return _sync_wrapper(ff, safety_mode)
-    finally:
-        idc.batch(old_batch)
+    """Wrapper for IDA synchronization (matches 1.4.0 behavior)."""
+    return _sync_wrapper(ff, safety_mode)
 
 
 def idawrite(f):
