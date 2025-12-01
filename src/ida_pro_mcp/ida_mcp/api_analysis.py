@@ -27,8 +27,8 @@ from .utils import (
     get_assembly_lines,
     get_all_xrefs,
     get_all_comments,
-    get_callees,
-    get_callers,
+    get_callees as get_callees_internal,
+    get_callers as get_callers_internal,
     get_xrefs_from_internal,
     extract_function_strings,
     extract_function_constants,
@@ -722,8 +722,8 @@ def analyze_funcs(
                 )
 
             xfrom_list = get_xrefs_from_internal(ea)[:max_xrefs]
-            callees_list = get_callees(addr)[:max_calls]
-            callers_list = get_callers(addr)[:max_calls]
+            callees_list = get_callees_internal(addr)[:max_calls]
+            callers_list = get_callers_internal(addr)[:max_calls]
             strings_list = extract_function_strings(ea)[:max_strings]
             constants_list = extract_function_constants(ea)[:max_constants]
 
