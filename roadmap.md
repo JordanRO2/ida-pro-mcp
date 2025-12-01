@@ -139,25 +139,28 @@ All paginated functions now return consistent cursor objects:
 - [x] Only converts tool result text, preserving MCP protocol structure
 - [x] Requires `python-toon>=0.1.3` dependency
 
-### Debug Logging
-- [x] Added `MCP_LOG_FILE` environment variable for file-based logging
-- [x] Logs requests/responses in WSL proxy (server.py)
-- [x] Logs HTTP requests in IDA plugin (zeromcp/mcp.py)
-- [x] Logs IDA sync operations with timing (sync.py)
+### Debug Logging (v1.5.0)
+- [x] Logging enabled by default to local files in plugin/src directories
+- [x] WSL proxy logs to: `src/ida_pro_mcp/mcp_debug.log`
+- [x] IDA plugin logs to: `plugins/ida_mcp/mcp_ida_debug.log`
+- [x] Comprehensive logging of all sync operations with step-by-step tracing
+- [x] Request/response logging with timing and truncation
 - [x] Warns on slow operations (>5 seconds)
+- [x] Full exception stack traces for debugging
 
-Usage:
-```bash
-# WSL side
-export MCP_LOG_FILE=/tmp/mcp_debug.log
-
-# Windows/IDA side
-set MCP_LOG_FILE=C:\temp\mcp_debug.log
-```
-
-### Connection Improvements
+### Connection & Stability Improvements (v1.5.0)
+- [x] Use `HTTPServer` instead of `ThreadingHTTPServer` (matches 1.4.0 behavior)
+- [x] Sequential request processing prevents IDA main thread contention
 - [x] Increased HTTP timeout from 30s to 120s for long operations
-- [x] Fixed `--ida-rpc` argument not updating global connection settings
+- [x] Fixed `--ida-rpc` argument global variable assignment
+- [x] Wait box dialog during MCP operations (shows "MCP: function_name...")
+- [x] Removed batch mode wrapper to match 1.4.0 sync behavior
+
+### Critical Bug Fixes (v1.5.0)
+- [x] Fixed `analyze_funcs` deadlock caused by nested `execute_sync` calls
+- [x] Renamed internal helper imports to avoid name collision with MCP tools
+- [x] Fixed duplicate global declaration syntax error
+- [x] Added traceback import for detailed error logging
 
 ## Planned
 
