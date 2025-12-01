@@ -3,6 +3,7 @@ import time
 import logging
 import queue
 import functools
+import traceback
 from enum import IntEnum
 import idaapi
 import ida_kernwin
@@ -77,14 +78,20 @@ def _sync_wrapper(ff, safety_mode: IDASafety):
         call_stack.put(func_name)
         try:
             # Show wait dialog to indicate IDA is processing
+            _sync_logger.debug(f"[SYNC] {func_name} - showing wait box")
             ida_kernwin.show_wait_box(f"MCP: {func_name}...")
+            _sync_logger.debug(f"[SYNC] {func_name} - executing function")
             result = ff()
+            _sync_logger.debug(f"[SYNC] {func_name} - function returned, putting result")
             res_container.put(result)
+            _sync_logger.debug(f"[SYNC] {func_name} - result queued")
         except Exception as x:
-            _sync_logger.error(f"[SYNC] {func_name} - exception: {x}")
+            _sync_logger.error(f"[SYNC] {func_name} - exception: {x}\n{traceback.format_exc()}")
             res_container.put(x)
         finally:
+            _sync_logger.debug(f"[SYNC] {func_name} - hiding wait box")
             ida_kernwin.hide_wait_box()
+            _sync_logger.debug(f"[SYNC] {func_name} - removing from call stack")
             call_stack.get()
             _sync_logger.debug(f"[SYNC] {func_name} - finished ({time.time() - exec_start:.2f}s)")
 
