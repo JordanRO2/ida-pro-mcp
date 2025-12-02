@@ -856,9 +856,14 @@ def decompile_checked(addr: int, force: bool = False):
             19: "MERR_HUGESTACK_DEST",
             20: "MERR_COMPLEXCODE",
             -1: "MERR_LICENSE",
+            -29: "MERR_INTERNAL_LIMIT",
         }
         error_name = error_codes.get(error.code, f"UNKNOWN({error.code})")
         message += f" [Error: {error_name}]"
+
+        # Add helpful hint for massive functions
+        if error.code == -29 or error.code == 20:
+            message += ". Function too large/complex for decompiler. Use disassemble_function instead."
 
         raise IDAError(message)
     return cfunc
