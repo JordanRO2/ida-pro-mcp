@@ -160,6 +160,38 @@ def rename_function(
     """Rename a function"""
     try:
         ea = parse_address(function_address)
+
+        # Check if name already exists
+        existing_ea = idaapi.get_name_ea(idaapi.BADADDR, new_name)
+        if existing_ea != idaapi.BADADDR and existing_ea != ea:
+            return {
+                "addr": function_address,
+                "name": new_name,
+                "ok": False,
+                "error": f"Name '{new_name}' already exists at {hex(existing_ea)}",
+            }
+
+        # Check for invalid characters (IDA allows alphanumeric, _, and ::)
+        # Note: :: is allowed for C++ namespaces (e.g., Class::Method)
+        valid_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:')
+        invalid_found = [c for c in new_name if c not in valid_chars]
+        if invalid_found:
+            return {
+                "addr": function_address,
+                "name": new_name,
+                "ok": False,
+                "error": f"Name contains invalid characters: {list(set(invalid_found))} (only alphanumeric, _, and :: allowed)",
+            }
+
+        # Check if name starts with digit
+        if new_name and new_name[0].isdigit():
+            return {
+                "addr": function_address,
+                "name": new_name,
+                "ok": False,
+                "error": "Name cannot start with a digit",
+            }
+
         success = idaapi.set_name(ea, new_name, idaapi.SN_CHECK)
         if success:
             func = idaapi.get_func(ea)
@@ -169,10 +201,10 @@ def rename_function(
             "addr": function_address,
             "name": new_name,
             "ok": success,
-            "error": None if success else "Rename failed",
+            "error": None if success else "Rename failed (unknown reason)",
         }
     except Exception as e:
-        return {"addr": function_address, "error": str(e)}
+        return {"addr": function_address, "name": new_name, "ok": False, "error": str(e)}
 
 
 @tool
