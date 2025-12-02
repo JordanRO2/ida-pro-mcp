@@ -831,6 +831,35 @@ def decompile_checked(addr: int, force: bool = False):
             message += f": {error.str}"
         if error.errea != idaapi.BADADDR:
             message += f" (address: {hex(error.errea)})"
+
+        # Add error code details
+        error_codes = {
+            0: "MERR_OK",
+            1: "MERR_BLOCK",
+            2: "MERR_INTERR",
+            3: "MERR_INSN",
+            4: "MERR_MEM",
+            5: "MERR_BADBLK",
+            6: "MERR_BADSP",
+            7: "MERR_PROLOG",
+            8: "MERR_SWITCH",
+            9: "MERR_EXCEPTION",
+            10: "MERR_HUGESTACK",
+            11: "MERR_LVARS",
+            12: "MERR_BITNESS",
+            13: "MERR_BADCALL",
+            14: "MERR_BADFRAME",
+            15: "MERR_UNKTYPE",
+            16: "MERR_BADIDB",
+            17: "MERR_SIZEOF",
+            18: "MERR_BADSP_DEST",
+            19: "MERR_HUGESTACK_DEST",
+            20: "MERR_COMPLEXCODE",
+            -1: "MERR_LICENSE",
+        }
+        error_name = error_codes.get(error.code, f"UNKNOWN({error.code})")
+        message += f" [Error: {error_name}]"
+
         raise IDAError(message)
     return cfunc
 
