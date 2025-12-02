@@ -91,6 +91,7 @@ def decompile_function(
     addrs: Annotated[list[str] | str, "Function addresses to decompile"],
     max_lines: Annotated[int, "Max lines per function (default: 2000, max: 10000, 0 for all)"] = 2000,
     offset: Annotated[int, "Skip first N lines (default: 0)"] = 0,
+    force: Annotated[bool, "Force decompile without timeout for huge/complex functions (default: False)"] = False,
 ) -> list[dict]:
     """Decompile functions to pseudocode with line-based pagination"""
     addrs = normalize_list_input(addrs)
@@ -104,7 +105,7 @@ def decompile_function(
     for addr in addrs:
         try:
             start = parse_address(addr)
-            cfunc = decompile_checked(start)
+            cfunc = decompile_checked(start, force=force)
             if is_window_active():
                 ida_hexrays.open_pseudocode(start, ida_hexrays.OPF_REUSE)
             sv = cfunc.get_pseudocode()

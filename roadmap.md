@@ -162,6 +162,11 @@ All paginated functions now return consistent cursor objects:
 - [x] Fixed duplicate global declaration syntax error
 - [x] Added traceback import for detailed error logging
 
+### Decompilation Improvements (v1.5.0)
+- [x] Added `force` parameter to `decompile_function` to skip timeout for huge/complex functions
+- [x] Uses `DECOMP_NO_WAIT` flag when `force=True` to handle 300KB+ functions
+- [x] Improved `rename_function` error messages for duplicate names and invalid characters
+
 ## Planned
 
 ### Performance Optimizations

@@ -803,12 +803,23 @@ def get_stack_frame_variables_internal(
     return members
 
 
-def decompile_checked(addr: int):
-    """Decompile a function and raise IDAError on failure"""
+def decompile_checked(addr: int, force: bool = False):
+    """Decompile a function and raise IDAError on failure
+
+    Args:
+        addr: Address to decompile
+        force: If True, use DECOMP_NO_WAIT to skip timeout for huge functions
+    """
     if not ida_hexrays.init_hexrays_plugin():
         raise IDAError("Hex-Rays decompiler is not available")
     error = ida_hexrays.hexrays_failure_t()
-    cfunc = ida_hexrays.decompile_func(addr, error, ida_hexrays.DECOMP_WARNINGS)
+
+    # Use DECOMP_NO_WAIT for large/complex functions to prevent timeout
+    flags = ida_hexrays.DECOMP_WARNINGS
+    if force:
+        flags |= ida_hexrays.DECOMP_NO_WAIT
+
+    cfunc = ida_hexrays.decompile_func(addr, error, flags)
     if not cfunc:
         if error.code == ida_hexrays.MERR_LICENSE:
             raise IDAError(
